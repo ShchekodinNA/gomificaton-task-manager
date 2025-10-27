@@ -4,6 +4,7 @@ Copyright © 2025 NAME HERE <EMAIL ADDRESS>
 package main
 
 import (
+	"fmt"
 	"gomificator/cmd"
 	"gomificator/internal/storage"
 
@@ -11,16 +12,25 @@ import (
 )
 
 func main() {
-	strg, err := storage.NewSqlliteStorage()
+	isStorageExists, err := storage.IsStorageExists()
 	if err != nil {
 		panic(err)
 	}
 
-	goose.SetLogger(goose.NopLogger())
-	goose.SetDialect("sqlite3")
+	if !isStorageExists {
 
-	if err = storage.MigrateDb(strg); err != nil {
-		panic(err)
+		strg, err := storage.NewSqlliteStorage()
+		if err != nil {
+			panic(err)
+		}
+
+		goose.SetDialect("sqlite3")
+		fmt.Println(">> first launch migrations:")
+		if err = storage.MigrateDb(strg); err != nil {
+			panic(err)
+		}
+		fmt.Println(">> end of first launch migrations\n\n\n")
+
 	}
 
 	cmd.Execute()

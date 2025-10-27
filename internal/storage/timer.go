@@ -2,18 +2,21 @@ package storage
 
 import (
 	"database/sql"
-	"errors"
 	"time"
 )
 
 type timerModel struct {
-	id    *int
-	start time.Time
-	end   time.Time
+	Id          *int
+	ExternalId  *string
+	Name        string
+	Description string
+	CreatedAt   time.Time
+	FixatedAt   time.Time
+	SecondSpent time.Duration
 }
 
 type TimerRepository interface {
-	Save(timerModel) (int, error) // Создает новый, если id == nil или обновляет нужную запись
+	Save(timer timerModel) (int, error) // Создает новый, если id == nil или обновляет нужную запись
 	GetLastTimers(q int) ([]timerModel, error)
 	Delete(id int) error
 }
@@ -22,60 +25,80 @@ type timerRepository struct {
 	db *sql.DB
 }
 
-var (
-	errTimerInvalid = errors.New("timer repository: invalid time range")
-)
-
-// NewTimerRepository provides a minimal constructor returning the interface.
 func NewTimerRepository(db *sql.DB) TimerRepository {
 	return &timerRepository{db: db}
 }
 
-// Save inserts or updates a timerModel and returns its id.
-func (r *timerRepository) Save(m timerModel) (int, error) {
-	if r == nil || r.db == nil {
-		return 0, sql.ErrConnDone
+func (r *timerRepository) Save(timer timerModel) (int, error) {
+	if timer.Id != nil {
+		return r.update(timer)
 	}
-
-	if m.start.IsZero() || m.end.IsZero() || !m.end.After(m.start) {
-		return 0, errTimerInvalid
-	}
-
-	start := m.start.UTC()
-	end := m.end.UTC()
-
-	if m.id == nil {
-		res, err := r.db.Exec(`INSERT INTO timers (start_utc, end_utc) VALUES (?, ?)`, start, end)
+	if timer.Id == nil && timer.ExternalId != nil {
+		id, err := r.getIdByExternalId(*timer.ExternalId)
 		if err != nil {
-			return 0, err
+			return r.create(timer)
 		}
-		id, err := res.LastInsertId()
-		if err != nil {
-			return 0, err
-		}
-		return int(id), nil
+		timer.Id = &id
+		return r.update(timer)
 	}
+	return r.create(timer)
+}
 
-	res, err := r.db.Exec(`UPDATE timers SET start_utc = ?, end_utc = ? WHERE id = ?`, start, end, *m.id)
+func (r *timerRepository) create(t timerModel) (int, error) {
+
+	res, err := r.db.Exec(`
+		INSERT INTO timers (external_id, fixed_at, seconds_spent, name, description)
+		VALUES (?, ?, ?, ?, ?)`,
+		*t.ExternalId,
+		t.FixatedAt.Format("2006-01-02"),
+		int(t.SecondSpent.Seconds()),
+		t.Name,
+		t.Description,
+	)
 	if err != nil {
 		return 0, err
 	}
-	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
-		return 0, sql.ErrNoRows
-	}
-	return *m.id, nil
+
+	id, err := res.LastInsertId()
+	return int(id), err
 }
 
-// GetLastTimers returns the last q timers.
-func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
-	if r == nil || r.db == nil {
-		return nil, sql.ErrConnDone
-	}
-	if q <= 0 {
-		return []timerModel{}, nil
-	}
+func (r *timerRepository) update(t timerModel) (int, error) {
+	_, err := r.db.Exec(`
+		UPDATE timers
+		SET external_id = ?,
+			fixed_at = ?,
+			seconds_spent = ?,
+			name = ?,
+			description = ?
+		WHERE id = ?`,
+		*t.ExternalId,
+		t.FixatedAt.Format("2006-01-02"),
+		int(t.SecondSpent.Seconds()),
+		t.Name,
+		t.Description,
+		*t.Id,
+	)
+	return *t.Id, err
+}
 
-	rows, err := r.db.Query(`SELECT id, start_utc, end_utc FROM timers ORDER BY start_utc DESC LIMIT ?`, q)
+func (r *timerRepository) getIdByExternalId(externalId string) (int, error) {
+	query := "SELECT id FROM timers WHERE external_id = ? limit 1"
+
+	var id int
+	err := r.db.QueryRow(
+		query,
+		externalId,
+	).Scan(&id)
+	return id, err
+}
+
+func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
+	rows, err := r.db.Query(`
+		SELECT id, external_id, fixed_at, seconds_spent, name, description, created_at
+		FROM timers
+		ORDER BY created_at DESC
+		LIMIT ?`, q)
 	if err != nil {
 		return nil, err
 	}
@@ -83,39 +106,36 @@ func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
 
 	var timers []timerModel
 	for rows.Next() {
-		var (
-			id    int
-			start time.Time
-			end   time.Time
+		var t timerModel
+		var fixatedAtStr string
+		var secondsSpent int
+		var externalId sql.NullString
+
+		err := rows.Scan(
+			&t.Id,
+			&externalId,
+			&fixatedAtStr,
+			&secondsSpent,
+			&t.Name,
+			&t.Description,
+			&t.CreatedAt,
 		)
-		if err := rows.Scan(&id, &start, &end); err != nil {
+		if err != nil {
 			return nil, err
 		}
-		idCopy := id
-		timers = append(timers, timerModel{
-			id:    &idCopy,
-			start: start,
-			end:   end,
-		})
-	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
+		if externalId.Valid {
+			t.ExternalId = &externalId.String
+		}
+		t.FixatedAt, _ = time.Parse("2006-01-02", fixatedAtStr)
+		t.SecondSpent = time.Duration(secondsSpent) * time.Second
+
+		timers = append(timers, t)
 	}
 	return timers, nil
 }
 
-// Delete removes a timer by id.
 func (r *timerRepository) Delete(id int) error {
-	if r == nil || r.db == nil {
-		return sql.ErrConnDone
-	}
-	res, err := r.db.Exec(`DELETE FROM timers WHERE id = ?`, id)
-	if err != nil {
-		return err
-	}
-	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	_, err := r.db.Exec("DELETE FROM timers WHERE id = ?", id)
+	return err
 }
