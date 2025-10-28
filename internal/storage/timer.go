@@ -2,22 +2,16 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
+	"gomificator/internal/constnats"
+	"gomificator/internal/models"
 	"time"
 )
 
-type timerModel struct {
-	Id          *int
-	ExternalId  *string
-	Name        string
-	Description string
-	CreatedAt   time.Time
-	FixatedAt   time.Time
-	SecondSpent time.Duration
-}
-
 type TimerRepository interface {
-	Save(timer timerModel) (int, error) // Создает новый, если id == nil или обновляет нужную запись
-	GetLastTimers(q int) ([]timerModel, error)
+	Save(timer models.TimerModel) (int, error) // Создает новый, если id == nil или обновляет нужную запись
+	GetLastTimers(q int) ([]models.TimerModel, error)
+	GetTimersBetweenDates(startDate, endDate time.Time) ([]models.TimerModel, error)
 	Delete(id int) error
 }
 
@@ -29,7 +23,7 @@ func NewTimerRepository(db *sql.DB) TimerRepository {
 	return &timerRepository{db: db}
 }
 
-func (r *timerRepository) Save(timer timerModel) (int, error) {
+func (r *timerRepository) Save(timer models.TimerModel) (int, error) {
 	if timer.Id != nil {
 		return r.update(timer)
 	}
@@ -44,14 +38,14 @@ func (r *timerRepository) Save(timer timerModel) (int, error) {
 	return r.create(timer)
 }
 
-func (r *timerRepository) create(t timerModel) (int, error) {
+func (r *timerRepository) create(t models.TimerModel) (int, error) {
 
 	res, err := r.db.Exec(`
 		INSERT INTO timers (external_id, fixed_at, seconds_spent, name, description)
 		VALUES (?, ?, ?, ?, ?)`,
 		*t.ExternalId,
 		t.FixatedAt.Format("2006-01-02"),
-		int(t.SecondSpent.Seconds()),
+		int(t.SecondsSpent.Seconds()),
 		t.Name,
 		t.Description,
 	)
@@ -63,7 +57,7 @@ func (r *timerRepository) create(t timerModel) (int, error) {
 	return int(id), err
 }
 
-func (r *timerRepository) update(t timerModel) (int, error) {
+func (r *timerRepository) update(t models.TimerModel) (int, error) {
 	_, err := r.db.Exec(`
 		UPDATE timers
 		SET external_id = ?,
@@ -74,7 +68,7 @@ func (r *timerRepository) update(t timerModel) (int, error) {
 		WHERE id = ?`,
 		*t.ExternalId,
 		t.FixatedAt.Format("2006-01-02"),
-		int(t.SecondSpent.Seconds()),
+		int(t.SecondsSpent.Seconds()),
 		t.Name,
 		t.Description,
 		*t.Id,
@@ -93,7 +87,7 @@ func (r *timerRepository) getIdByExternalId(externalId string) (int, error) {
 	return id, err
 }
 
-func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
+func (r *timerRepository) GetLastTimers(q int) ([]models.TimerModel, error) {
 	rows, err := r.db.Query(`
 		SELECT id, external_id, fixed_at, seconds_spent, name, description, created_at
 		FROM timers
@@ -104,12 +98,13 @@ func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
 	}
 	defer rows.Close()
 
-	var timers []timerModel
+	var timers []models.TimerModel
 	for rows.Next() {
-		var t timerModel
+		var t models.TimerModel
 		var fixatedAtStr string
 		var secondsSpent int
 		var externalId sql.NullString
+		var createdAt time.Time
 
 		err := rows.Scan(
 			&t.Id,
@@ -118,7 +113,7 @@ func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
 			&secondsSpent,
 			&t.Name,
 			&t.Description,
-			&t.CreatedAt,
+			&createdAt,
 		)
 		if err != nil {
 			return nil, err
@@ -127,8 +122,9 @@ func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
 		if externalId.Valid {
 			t.ExternalId = &externalId.String
 		}
-		t.FixatedAt, _ = time.Parse("2006-01-02", fixatedAtStr)
-		t.SecondSpent = time.Duration(secondsSpent) * time.Second
+		t.FixatedAt, _ = time.Parse(constnats.DateLayout, fixatedAtStr)
+		t.SecondsSpent = time.Duration(secondsSpent) * time.Second
+		t.CreatedAt = &createdAt
 
 		timers = append(timers, t)
 	}
@@ -138,4 +134,54 @@ func (r *timerRepository) GetLastTimers(q int) ([]timerModel, error) {
 func (r *timerRepository) Delete(id int) error {
 	_, err := r.db.Exec("DELETE FROM timers WHERE id = ?", id)
 	return err
+}
+
+func (r *timerRepository) GetTimersBetweenDates(startDate, endDate time.Time) ([]models.TimerModel, error) {
+	rows, err := r.db.Query(`
+		SELECT id, external_id, fixed_at, seconds_spent, name, description, created_at
+		FROM timers
+		WHERE fixed_at BETWEEN ? AND ?`,
+		startDate.Format(constnats.DateLayout),
+		endDate.Format(constnats.DateLayout),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	var timers []models.TimerModel
+
+	for rows.Next() {
+		var t models.TimerModel
+		var fixatedAtStr string
+		var secondsSpent int
+		var externalId sql.NullString
+		var createdAt time.Time
+
+		err := rows.Scan(
+			&t.Id,
+			&externalId,
+			&fixatedAtStr,
+			&secondsSpent,
+			&t.Name,
+			&t.Description,
+			&createdAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("row scan: %w", err)
+		}
+
+		if externalId.Valid {
+			t.ExternalId = &externalId.String
+		}
+
+		t.CreatedAt = &createdAt
+		t.FixatedAt, _ = time.Parse(constnats.DateLayout, fixatedAtStr)
+		t.SecondsSpent = time.Duration(secondsSpent) * time.Second
+
+		timers = append(timers, t)
+
+	}
+
+	return timers, nil
 }

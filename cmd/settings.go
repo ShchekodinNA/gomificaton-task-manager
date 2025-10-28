@@ -12,7 +12,7 @@ import (
 
 var settingsCmd = &cobra.Command{
 	Use:   "settings",
-	Short: "Where yaml file stored",
+	Short: "See where settings are stored and their validation status",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		path, err := settings.GetDefaultConfigPath()
@@ -20,8 +20,14 @@ var settingsCmd = &cobra.Command{
 			panic("Can't get default path")
 		}
 
-		fmt.Println("Settings stored here:")
-		fmt.Println(path)
+		fmt.Println("Settings path: ", path)
+
+		fmt.Printf("Validation status: ")
+		if _, err = settings.LoadConfig(&path); err != nil {
+			fmt.Println("invalid")
+			panic(err)
+		}
+		fmt.Println("valid")
 	},
 }
 

@@ -2,49 +2,141 @@ package settings
 
 import (
 	"fmt"
+	"gomificator/internal/constnats"
 	"gomificator/internal/utils"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	PomoConfig PomodoroConfig `yaml:"pomodoro"`
+	// PomoConfig PomodoroConfig     `yaml:"pomodoro"`
+	DayTypes    map[string]DayType       `yaml:"daytypes"`
+	CalendarRaw map[string]string        `yaml:"calendar"`
+	Celendar    map[time.Weekday]DayType `yaml:"-"`
 }
 
 func (c *Config) Validate() error {
-	if err := c.PomoConfig.Validate(); err != nil {
-		return fmt.Errorf("pomodoro: %w", err)
+
+	// if err := c.PomoConfig.Validate(); err != nil {
+	// 	return fmt.Errorf("pomodoro: %w", err)
+	// }
+
+	for dayTypeName, dayType := range c.DayTypes {
+		if err := dayType.Validate(); err != nil {
+			return fmt.Errorf("day type %q: %w", dayTypeName, err)
+		}
+	}
+
+	weekdayMap := map[string]time.Weekday{
+		"mon": time.Monday,
+		"tue": time.Tuesday,
+		"wed": time.Wednesday,
+		"thu": time.Thursday,
+		"fri": time.Friday,
+		"sat": time.Saturday,
+		"sun": time.Sunday,
+	}
+
+	c.Celendar = make(map[time.Weekday]DayType)
+	for weekdayStr, dayTypeStr := range c.CalendarRaw {
+		weekday, ok := weekdayMap[weekdayStr]
+		if !ok {
+			return fmt.Errorf("unknown weekday string: %s", weekdayStr)
+		}
+		dayType, ok := c.DayTypes[dayTypeStr]
+		if !ok {
+			return fmt.Errorf("unknown day type string: %s", dayTypeStr)
+		}
+		c.Celendar[weekday] = dayType
 	}
 
 	return nil
 }
 
-type PomodoroConfig struct {
-	PomoLength       int `yaml:"pomolength" validate:"gte=1,lte=60"`
-	RestLength       int `yaml:"pomorest" validate:"gte=1,lte=60"`
-	LongRestLength   int `yaml:"longrestlength" validate:"gte=1,lte=60"`
-	PomosTilLongRest int `yaml:"pomostillongrest" validate:"gte=1,lte=60"`
+// type PomodoroConfig struct {
+// 	PomoLength       int `yaml:"pomolength" validate:"gte=1,lte=60"`
+// 	RestLength       int `yaml:"pomorest" validate:"gte=1,lte=60"`
+// 	LongRestLength   int `yaml:"longrestlength" validate:"gte=1,lte=60"`
+// 	PomosTilLongRest int `yaml:"pomostillongrest" validate:"gte=1,lte=60"`
+// }
+//
+// func (c *PomodoroConfig) Validate() error {
+// 	validate := validator.New(validator.WithRequiredStructEnabled())
+// 	if err := validate.Struct(c); err != nil {
+// 		return fmt.Errorf("validate struct: %w", err)
+// 	}
+// 	return nil
+// }
+
+type DayType struct {
+	FocusGoals []FocusDayGoal `yaml:"focusgoals"`
 }
 
-func (c *PomodoroConfig) Validate() error {
+func (d *DayType) Validate() error {
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
-	if err := validate.Struct(c); err != nil {
+	if err := validate.Struct(d); err != nil {
 		return fmt.Errorf("validate struct: %w", err)
 	}
+
+	var errs []error
+	for idx := range d.FocusGoals {
+		if err := d.FocusGoals[idx].Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("focus goals: %w", err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("day type validation errors: %v", errs)
+	}
+
 	return nil
 }
+
+type FocusDayGoal struct {
+	RestAfterStr string    `yaml:"restafter" validate:"required"`
+	RestAfter    time.Time `yaml:"-"`
+
+	Minutes int `yaml:"minutes" validate:"gte=0,lte=1440"`
+	Count   int `yaml:"count" validate:"gte=0,lte=1440"`
+
+	MedalStr string          `yaml:"medal" validate:"required"`
+	Medal    constnats.Medal `yaml:"-"`
+}
+
+func (f *FocusDayGoal) Validate() error {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+
+	if err := validate.Struct(f); err != nil {
+		return fmt.Errorf("validate struct: %w", err)
+	}
+
+	medal, err := constnats.LoadMedal(f.MedalStr)
+	if err != nil {
+		return fmt.Errorf("load medal: %w", err)
+	}
+	f.Medal = medal
+
+	time, err := time.Parse(constnats.TimeLayout, f.RestAfterStr)
+	if err != nil {
+		return fmt.Errorf("parse rest after time: %w", err)
+	}
+	f.RestAfter = time
+
+	return nil
+}
+
 func newDefaultConfig() *Config {
 	return &Config{
-		PomoConfig: PomodoroConfig{
-			PomoLength:       25,
-			RestLength:       5,
-			LongRestLength:   15,
-			PomosTilLongRest: 4,
-		},
+		// PomoConfig: PomodoroConfig{
+		// 	PomoLength:       25,
+		// 	RestLength:       5,
+		// 	LongRestLength:   15,
+		// 	PomosTilLongRest: 4,
+		// },
 	}
 }
 
