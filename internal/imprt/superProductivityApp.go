@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// TODO Добавь проверку архива "archiveOld" и "archiveLive" в json. Сущности там такие же, но не хотелось бы их пропускать
 const superProductivity = "SuperProductivity"
 
 type backupFileContent struct {
