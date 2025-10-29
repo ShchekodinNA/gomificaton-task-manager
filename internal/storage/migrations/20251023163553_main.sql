@@ -28,8 +28,15 @@ create table if not EXISTS bought_items (
 
 create table if not EXISTS wallet (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    count int
+    count int,
     medal_type TEXT UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS rewards_daily (
+    day DATE NOT NULL,
+    medal_type TEXT NOT NULL,
+    count INT NOT NULL,
+    PRIMARY KEY(day, medal_type)
 );
 -- +goose StatementEnd
 
@@ -39,4 +46,5 @@ DROP TABLE IF EXISTS bought_items;
 DROP TABLE IF EXISTS shopping_list_items;
 DROP TABLE IF EXISTS timers;
 DROP TABLE IF EXISTS wallet;
+DROP TABLE IF EXISTS rewards_daily;
 -- +goose StatementEnd

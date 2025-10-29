@@ -10,10 +10,11 @@ import (
 )
 
 type Storage struct {
-	db *sql.DB
+    db *sql.DB
 
-	TimersRepo TimerRepository
-	WalletRepo WalletRepository
+    TimersRepo TimerRepository
+    WalletRepo WalletRepository
+    RewardsRepo RewardsDailyRepository
 }
 
 // NewSqlliteStorage creates a new SQLite storage instance.
@@ -35,10 +36,11 @@ func NewSqlliteStorage() (*Storage, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	timerRepo := NewTimerRepository(db)
-	walletRepo := NewWalletRepository(db)
+    timerRepo := NewTimerRepository(db)
+    walletRepo := NewWalletRepository(db)
+    rewardsRepo := NewRewardsDailyRepository(db)
 
-	return &Storage{db: db, TimersRepo: timerRepo, WalletRepo: walletRepo}, nil
+    return &Storage{db: db, TimersRepo: timerRepo, WalletRepo: walletRepo, RewardsRepo: rewardsRepo}, nil
 }
 
 func getDefaultStoragePath() (string, error) {
