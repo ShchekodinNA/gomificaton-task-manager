@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// TODO Добавь проверку архива "archiveOld" и "archiveLive" в json. Сущности там такие же, но не хотелось бы их пропускать
 const superProductivity = "SuperProductivity"
 
 type backupFileContent struct {
@@ -17,6 +16,12 @@ type backupFileContent struct {
 }
 
 type dataContent struct {
+	Task         taskEntry    `json:"task"`
+	ArchiveOld   archiveEntry `json:"archiveOld"`
+	ArchiveYoung archiveEntry `json:"archiveYoung"`
+}
+
+type archiveEntry struct {
 	Task taskEntry `json:"task"`
 }
 
@@ -50,7 +55,9 @@ func (i *impoerterSuperProductivityExportFile) Import() ([]models.TimerModel, er
 		return nil, fmt.Errorf("decode backup file: %w", err)
 	}
 
-	timers, err := createBatchTimers(backupContent.Data.Task.Entities)
+	allEntities := extractAllEntities(backupContent.Data)
+
+	timers, err := createBatchTimers(allEntities)
 	if err != nil {
 		return nil, fmt.Errorf("create batch timers: %w", err)
 	}
@@ -78,7 +85,9 @@ func (i *impoerterSuperProductivityBackupFile) Import() ([]models.TimerModel, er
 		return nil, fmt.Errorf("decode backup file: %w", err)
 	}
 
-	timers, err := createBatchTimers(dataContent.Task.Entities)
+	allEntities := extractAllEntities(dataContent)
+
+	timers, err := createBatchTimers(allEntities)
 	if err != nil {
 		return nil, fmt.Errorf("create batch timers: %w", err)
 	}
@@ -88,6 +97,33 @@ func (i *impoerterSuperProductivityBackupFile) Import() ([]models.TimerModel, er
 }
 
 // general functions
+func extractAllEntities(dc dataContent) map[string]taskEntity {
+	total := 0
+	if dc.Task.Entities != nil {
+		total += len(dc.Task.Entities)
+	}
+	if dc.ArchiveOld.Task.Entities != nil {
+		total += len(dc.ArchiveOld.Task.Entities)
+	}
+	if dc.ArchiveYoung.Task.Entities != nil {
+		total += len(dc.ArchiveYoung.Task.Entities)
+	}
+
+	out := make(map[string]taskEntity, total)
+
+	for k, v := range dc.Task.Entities {
+		out[k] = v
+	}
+	for k, v := range dc.ArchiveOld.Task.Entities {
+		out[k] = v
+	}
+	for k, v := range dc.ArchiveYoung.Task.Entities {
+		out[k] = v
+	}
+
+	return out
+}
+
 func createBatchTimers(entities map[string]taskEntity) ([]models.TimerModel, error) {
 	var timers []models.TimerModel
 
