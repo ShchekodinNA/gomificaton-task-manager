@@ -12,11 +12,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var weekdayMap = map[string]time.Weekday{
+	"mon": time.Monday,
+	"tue": time.Tuesday,
+	"wed": time.Wednesday,
+	"thu": time.Thursday,
+	"fri": time.Friday,
+	"sat": time.Saturday,
+	"sun": time.Sunday,
+}
+
 type Config struct {
 	// PomoConfig PomodoroConfig     `yaml:"pomodoro"`
-	DayTypes    map[string]DayType       `yaml:"daytypes"`
-	CalendarRaw map[string]string        `yaml:"calendar"`
-	Celendar    map[time.Weekday]DayType `yaml:"-"`
+	DayTypes           map[string]DayType       `yaml:"daytypes"`
+	CalendarRaw        map[string]string        `yaml:"calendar"`
+	Celendar           map[time.Weekday]DayType `yaml:"-"`
+	AlwaysRestAfterStr string                   `yaml:"alwaysrestafter"`
+	AlwaysRestAfter    time.Time                `yaml:"-"`
 }
 
 func (c *Config) Validate() error {
@@ -29,16 +41,8 @@ func (c *Config) Validate() error {
 		if err := dayType.Validate(); err != nil {
 			return fmt.Errorf("day type %q: %w", dayTypeName, err)
 		}
-	}
-
-	weekdayMap := map[string]time.Weekday{
-		"mon": time.Monday,
-		"tue": time.Tuesday,
-		"wed": time.Wednesday,
-		"thu": time.Thursday,
-		"fri": time.Friday,
-		"sat": time.Saturday,
-		"sun": time.Sunday,
+		dayType.Name = dayTypeName
+		c.DayTypes[dayTypeName] = dayType
 	}
 
 	c.Celendar = make(map[time.Weekday]DayType)
@@ -54,6 +58,11 @@ func (c *Config) Validate() error {
 		c.Celendar[weekday] = dayType
 	}
 
+	alwaysRestAfter, err := time.Parse(constnats.TimeLayout, c.AlwaysRestAfterStr)
+	if err != nil {
+		return fmt.Errorf("time parse: %w", err)
+	}
+	c.AlwaysRestAfter = alwaysRestAfter
 	return nil
 }
 
@@ -73,6 +82,7 @@ func (c *Config) Validate() error {
 // }
 
 type DayType struct {
+	Name       string         `yaml:"-"`
 	FocusGoals []FocusDayGoal `yaml:"focusgoals"`
 }
 

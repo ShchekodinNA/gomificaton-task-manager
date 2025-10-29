@@ -13,6 +13,7 @@ type Storage struct {
 	db *sql.DB
 
 	TimersRepo TimerRepository
+	WalletRepo WalletRepository
 }
 
 // NewSqlliteStorage creates a new SQLite storage instance.
@@ -35,8 +36,9 @@ func NewSqlliteStorage() (*Storage, error) {
 	}
 
 	timerRepo := NewTimerRepository(db)
+	walletRepo := NewWalletRepository(db)
 
-	return &Storage{db: db, TimersRepo: timerRepo}, nil
+	return &Storage{db: db, TimersRepo: timerRepo, WalletRepo: walletRepo}, nil
 }
 
 func getDefaultStoragePath() (string, error) {

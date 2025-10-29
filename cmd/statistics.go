@@ -8,10 +8,13 @@ import (
 	"gomificator/internal/constnats"
 	"gomificator/internal/settings"
 	"gomificator/internal/storage"
+	"os"
 	"slices"
 	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -46,43 +49,15 @@ var statisticsCmd = &cobra.Command{
 		currentMinutes := int(totalDuration.Minutes())
 		// Display statistics
 
-		currentWeekDay := time.Now().Weekday()
-
-		dayType, ok := appSettings.Celendar[currentWeekDay]
-		if !ok {
-			fmt.Printf("No day type configured for today.")
-			return
+		statisticsModel, err := MakeNewStatisticsModel(*appSettings, currentMinutes)
+		if err != nil {
+			panic(err)
 		}
 
-		focusGoals := make([]settings.FocusDayGoal, len(dayType.FocusGoals), cap(dayType.FocusGoals))
-		copy(focusGoals, dayType.FocusGoals)
-
-		slices.SortFunc(focusGoals, func(a, b settings.FocusDayGoal) int {
-			if b.RestAfter.After(a.RestAfter) {
-				return -1
-			}
-			return +1
-		})
-
-		goalProgresses := make([]GoalProgress, 0, len(focusGoals))
-
-		for _, focusGoal := range focusGoals {
-			goalProgresses = append(goalProgresses, MakeGoalProgress(
-				focusGoal.Minutes,
-				currentMinutes,
-				focusGoal.Count,
-				focusGoal.Medal,
-				focusGoal.RestAfterStr,
-			))
+		if _, err := tea.NewProgram(statisticsModel).Run(); err != nil {
+			fmt.Println("Oh no, it didn't work:", err)
+			os.Exit(1)
 		}
-
-		out := "type of current day: " + "some" + "\n"
-
-		for _, goalProgress := range goalProgresses {
-			out += fmt.Sprintf("%s\n\n", goalProgress.Show())
-		}
-
-		print(out)
 
 	},
 }
@@ -106,18 +81,107 @@ const (
 	maxWidth = 80
 )
 
-// var helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render
+var (
+	greenBackgroudStyle = lipgloss.NewStyle().Background(lipgloss.Color("#085301ff")).Render
+)
+
+type modelStatistics struct {
+	nearestRest   time.Time
+	dayType       string
+	goalProgreses []GoalProgress
+}
+
+func (m modelStatistics) Init() tea.Cmd {
+	return nil
+}
+
+func (m modelStatistics) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case tea.KeyMsg:
+		return m, tea.Quit
+
+	default:
+		return m, nil
+	}
+}
+
+func (m modelStatistics) View() string {
+	out := "Current day type: " + m.dayType + "\n"
+
+	out += fmt.Sprintf("%s\n\n", m.viewRestStatusBlock())
+	for _, goalProgress := range m.goalProgreses {
+		out += fmt.Sprintf("%s\n\n", goalProgress.Show())
+	}
+
+	return out
+}
+
+func (m modelStatistics) viewRestStatusBlock() string {
+	out := "Rest status: "
+
+	now, _ := time.Parse(constnats.TimeLayout, time.Now().Format(constnats.TimeLayout))
+
+	if now.After(m.nearestRest) {
+		out += greenBackgroudStyle("You can rest!")
+	} else {
+		out += fmt.Sprintf("wait till %s", m.nearestRest.Format(constnats.TimeLayout))
+	}
+
+	return out
+
+}
+
+func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int) (modelStatistics, error) {
+	currentWeekDay := time.Now().Weekday()
+
+	dayType, ok := cfg.Celendar[currentWeekDay]
+	if !ok {
+		return modelStatistics{}, fmt.Errorf("no day type configured for today")
+	}
+
+	focusGoals := make([]settings.FocusDayGoal, len(dayType.FocusGoals))
+	copy(focusGoals, dayType.FocusGoals)
+
+	slices.SortFunc(focusGoals, func(a, b settings.FocusDayGoal) int {
+		if b.RestAfter.After(a.RestAfter) {
+			return -1
+		}
+		return +1
+	})
+
+	goalProgresses := make([]GoalProgress, 0, len(focusGoals))
+
+	for _, focusGoal := range focusGoals {
+		goalProgresses = append(goalProgresses, MakeGoalProgress(
+			focusGoal.Minutes,
+			currentMinutes,
+			focusGoal.Count,
+			focusGoal.Medal,
+			focusGoal.RestAfter,
+		))
+	}
+
+	nearestRestTime := cfg.AlwaysRestAfter
+
+	for _, goalProgress := range goalProgresses {
+		if goalProgress.getProgressCoef() >= 1 && goalProgress.restAfter.Before(nearestRestTime) {
+			nearestRestTime = goalProgress.restAfter
+		}
+	}
+
+	return modelStatistics{dayType: dayType.Name, goalProgreses: goalProgresses, nearestRest: nearestRestTime}, nil
+}
 
 type GoalProgress struct {
 	targetMinutes  int
 	currentMinutes int
 	medalCount     int
 	medalType      constnats.Medal
-	restAfter      string
+	restAfter      time.Time
 	Progress       progress.Model
 }
 
-func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType constnats.Medal, restAfter string) GoalProgress {
+func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType constnats.Medal, restAfter time.Time) GoalProgress {
 	var progressOption progress.Option
 
 	switch medalType {
@@ -126,13 +190,13 @@ func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType c
 	case constnats.MedalSilver:
 		progressOption = progress.WithGradient("#696969ff", "#C0C0C0")
 	case constnats.MedalBronze:
-		progressOption = progress.WithGradient("#CD7F32", "#8B4513")
+		progressOption = progress.WithGradient("#8B4513", "#CD7F32")
 	case constnats.MedalSteel:
 		progressOption = progress.WithGradient("#89aec5ff", "#335980ff")
 	case constnats.MedalWood:
-		progressOption = progress.WithGradient("#5c3916ff", "#291507ff")
+		progressOption = progress.WithGradient("#291507ff", "#5c3916ff")
 	default:
-		progressOption = progress.WithGradient("#fa6d42ff", "#ff0000ff")
+		progressOption = progress.WithGradient("#000000ff", "#ffffffff")
 	}
 	progressBar := progress.New(progressOption)
 	progressBar.Width = maxWidth
@@ -148,41 +212,21 @@ func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType c
 }
 
 func (g GoalProgress) Show() string {
-	return fmt.Sprintf("%d/%d Minutes\nRewards: Rest from %s, Medal - %d %s\n%s",
+
+	out := fmt.Sprintf("%d/%d Minutes\nRewards: Rest from %s, Medal - %d %s\n%s",
 		g.currentMinutes,
 		g.targetMinutes,
-		g.restAfter,
+		g.restAfter.Format(constnats.TimeLayout),
 		g.medalCount,
 		g.medalType,
-		g.Progress.ViewAs(float64(g.currentMinutes)/float64(g.targetMinutes)),
+		g.Progress.ViewAs(g.getProgressCoef()),
 	)
+	if g.getProgressCoef() >= 1 {
+		out = greenBackgroudStyle(out)
+	}
+	return out
 }
 
-// type modelStatistics struct {
-// 	dayType       string
-// 	goalProgreses []GoalProgress
-// }
-
-// func (m modelStatistics) Init() tea.Cmd {
-// 	return nil
-// }
-
-// func (m modelStatistics) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-// 	switch msg.(type) {
-// 	case tea.KeyMsg:
-// 		return m, tea.Quit
-
-// 	default:
-// 		return m, nil
-// 	}
-// }
-
-// func (m modelStatistics) View() string {
-// 	out := "type of current day: " + m.dayType + "\n"
-
-// 	for _, goalProgress := range m.goalProgreses {
-// 		out += fmt.Sprintf("%s\n\n", goalProgress.Show())
-// 	}
-
-// 	return out
-// }
+func (g GoalProgress) getProgressCoef() float64 {
+	return float64(g.currentMinutes) / float64(g.targetMinutes)
+}

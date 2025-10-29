@@ -26,6 +26,11 @@ create table if not EXISTS bought_items (
     FOREIGN KEY (shopping_list_item_id) REFERENCES shopping_list_items(id)
 );
 
+create table if not EXISTS wallet (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    count int
+    medal_type TEXT UNIQUE
+);
 -- +goose StatementEnd
 
 -- +goose Down
@@ -33,4 +38,5 @@ create table if not EXISTS bought_items (
 DROP TABLE IF EXISTS bought_items;
 DROP TABLE IF EXISTS shopping_list_items;
 DROP TABLE IF EXISTS timers;
+DROP TABLE IF EXISTS wallet;
 -- +goose StatementEnd
