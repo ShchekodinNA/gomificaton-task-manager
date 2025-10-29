@@ -82,7 +82,7 @@ func init() {
 	importCmd.Flags().StringP(FileDestFlag, "F", "", "Path to source file for import")
 	importCmd.MarkFlagRequired(FileDestFlag)
 
-	importCmd.Flags().StringP(SourceTypeFlag, "S", string(imprt.ImporterTypeSuperProductivityExport), "Type of source file")
+	importCmd.Flags().StringP(SourceTypeFlag, "S", imprt.ImporterTypeSuperProductivityExport.String(), "Type of source file")
 
 	// importCmd.Flags().StringP(SourceTypeFlag, "S", DefaultSourceType, "Type of source file")
 }

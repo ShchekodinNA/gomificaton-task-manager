@@ -2,20 +2,32 @@ package imprt
 
 import "fmt"
 
-type ImporterType string
+type ImporterType int
 
 const (
-	ImporterTypeSuperProductivityExport ImporterType = "spexport"
-	ImporterTypeSuperProductivityBackup ImporterType = "spbackup"
+	ImporterTypeSuperProductivityExport ImporterType = iota
+	ImporterTypeSuperProductivityBackup
 )
+
+var importerTypeMap = map[ImporterType]string{
+	ImporterTypeSuperProductivityExport: "spexport",
+	ImporterTypeSuperProductivityBackup: "spbackup",
+}
+
+func (i ImporterType) String() string {
+	return importerTypeMap[i]
+}
+
+// ImporterTypeSuperProductivityExport ImporterType = "spexport"
+// ImporterTypeSuperProductivityBackup ImporterType = "spbackup"
 
 func GetImporterTypeByString(importerTypeStr string) (ImporterType, error) {
 	switch importerTypeStr {
-	case string(ImporterTypeSuperProductivityExport):
+	case importerTypeMap[ImporterTypeSuperProductivityExport]:
 		return ImporterTypeSuperProductivityExport, nil
-	case string(ImporterTypeSuperProductivityBackup):
+	case importerTypeMap[ImporterTypeSuperProductivityBackup]:
 		return ImporterTypeSuperProductivityBackup, nil
 	default:
-		return "", fmt.Errorf("unknown importer type: %s", importerTypeStr)
+		return 0, fmt.Errorf("unknown importer type: %s", importerTypeStr)
 	}
 }

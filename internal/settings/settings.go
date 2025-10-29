@@ -29,6 +29,7 @@ type Config struct {
 	Celendar           map[time.Weekday]DayType `yaml:"-"`
 	AlwaysRestAfterStr string                   `yaml:"alwaysrestafter"`
 	AlwaysRestAfter    time.Time                `yaml:"-"`
+	AutoImport         AutoImportConfig         `yaml:"autoimport"`
 }
 
 func (c *Config) Validate() error {
@@ -63,6 +64,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("time parse: %w", err)
 	}
 	c.AlwaysRestAfter = alwaysRestAfter
+
+	if err := c.AutoImport.Validate(); err != nil {
+		return fmt.Errorf("autoimport: %w", err)
+	}
 	return nil
 }
 
@@ -148,6 +153,29 @@ func newDefaultConfig() *Config {
 		// 	PomosTilLongRest: 4,
 		// },
 	}
+}
+
+type AutoImportConfig struct {
+	EveryStr string        `yaml:"every" validate:"required"`
+	Every    time.Duration `yaml:"-"`
+	Path     string        `yaml:"path" validate:"required"`
+}
+
+func (a *AutoImportConfig) Validate() error {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	if err := validate.Struct(a); err != nil {
+		return fmt.Errorf("validate struct: %w", err)
+	}
+
+	d, err := time.ParseDuration(a.EveryStr)
+	if err != nil {
+		return fmt.Errorf("parse duration: %w", err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("duration must be positive")
+	}
+	a.Every = d
+	return nil
 }
 
 func initConfigFile(confPath string) (*Config, error) {
