@@ -4,18 +4,20 @@ Copyright © 2025 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"fmt"
-	"gomificator/internal/constnats"
-	"gomificator/internal/settings"
-	"gomificator/internal/storage"
-	"os"
-	"slices"
-	"time"
+    "fmt"
+    "gomificator/internal/constnats"
+    "gomificator/internal/settings"
+    "gomificator/internal/storage"
+    "os"
+    "slices"
+    "time"
+    "strings"
+    "math"
 
-	"github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/cobra"
+    "github.com/charmbracelet/bubbles/progress"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/lipgloss"
+    "github.com/spf13/cobra"
 )
 
 // statisticsCmd represents the statistics command
@@ -46,13 +48,64 @@ var statisticsCmd = &cobra.Command{
 			totalDuration += timer.SecondsSpent
 		}
 
-		currentMinutes := int(totalDuration.Minutes())
-		// Display statistics
+        currentMinutes := int(totalDuration.Minutes())
 
-		statisticsModel, err := MakeNewStatisticsModel(*appSettings, currentMinutes)
-		if err != nil {
-			panic(err)
-		}
+        // Compute total minutes across all timers (TODO: fix bottleneck)
+        allTimers, err := strg.TimersRepo.GetTimersBetweenDates(
+            time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+            time.Now(),
+        )
+        if err != nil {
+            panic(err)
+        }
+        totalMinutes := 0
+        for _, t := range allTimers {
+            totalMinutes += int(t.SecondsSpent.Minutes())
+        }
+
+        // Determine current level from settings Levels slice
+        levelName := ""
+        levelNum := 0
+        if len(appSettings.Levels) > 0 {
+            for i := range appSettings.Levels {
+                if totalMinutes >= appSettings.Levels[i].Threshold {
+                    levelNum = appSettings.Levels[i].Lvl
+                    levelName = appSettings.Levels[i].Name
+                } else {
+                    break
+                }
+            }
+        }
+
+        // Last 7 days minutes (oldest -> newest)
+        start7 := time.Now().AddDate(0, 0, -6)
+        end7 := time.Now()
+        sevenTimers, err := strg.TimersRepo.GetTimersBetweenDates(start7, end7)
+        if err != nil {
+            panic(err)
+        }
+        // Aggregate per day
+        dayBuckets := make(map[string]int, 7)
+        for i := 0; i < 7; i++ {
+            d := start7.AddDate(0, 0, i)
+            dayBuckets[d.Format(constnats.DateLayout)] = 0
+        }
+        for _, t := range sevenTimers {
+            key := t.FixatedAt.Format(constnats.DateLayout)
+            dayBuckets[key] += int(t.SecondsSpent.Minutes())
+        }
+        last7 := make([]int, 7)
+        for i := 0; i < 7; i++ {
+            d := start7.AddDate(0, 0, i)
+            last7[i] = dayBuckets[d.Format(constnats.DateLayout)]
+        }
+
+        // Display statistics
+
+        statisticsModel, err := MakeNewStatisticsModel(*appSettings, currentMinutes, totalMinutes, levelNum, levelName, last7)
+        if err != nil {
+            panic(err)
+        }
 
 		if _, err := tea.NewProgram(statisticsModel).Run(); err != nil {
 			fmt.Println("Oh no, it didn't work:", err)
@@ -82,13 +135,22 @@ const (
 )
 
 var (
-	greenBackgroudStyle = lipgloss.NewStyle().Background(lipgloss.Color("#085301ff")).Render
+    greenBackgroudStyle = lipgloss.NewStyle().Background(lipgloss.Color("#085301ff")).Render
+    titleStyle          = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4"))
+    sectionTitleStyle   = lipgloss.NewStyle().Bold(true).Underline(true)
+    labelStyle          = lipgloss.NewStyle().Faint(true)
+    valueStyle          = lipgloss.NewStyle()
+    boxStyle            = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 )
 
 type modelStatistics struct {
-	nearestRest   time.Time
-	dayType       string
-	goalProgreses []GoalProgress
+    nearestRest   time.Time
+    dayType       string
+    goalProgreses []GoalProgress
+    totalMinutes  int
+    levelNum      int
+    levelName     string
+    last7Days     []int
 }
 
 func (m modelStatistics) Init() tea.Cmd {
@@ -106,18 +168,50 @@ func (m modelStatistics) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m modelStatistics) View() string {
-	out := "Current day type: " + m.dayType + "\n"
+    // Title
+    out := titleStyle.Render("Statistics") + "\n\n"
 
-	out += fmt.Sprintf("%s\n\n", m.viewRestStatusBlock())
-	for _, goalProgress := range m.goalProgreses {
-		out += fmt.Sprintf("%s\n\n", goalProgress.Show())
-	}
+    // Summary box (all-time)
+    lvlLine := "0"
+    if m.levelName != "" || m.levelNum > 0 {
+        lvlLine = fmt.Sprintf("%d - %s", m.levelNum, m.levelName)
+    }
+    summary := []string{
+        formatKV("Total Minutes", fmt.Sprintf("%d", m.totalMinutes)),
+        formatKV("Current Level", lvlLine),
+    }
+    out += sectionTitleStyle.Render("Summary") + "\n"
+    out += boxStyle.Render(strings.Join(summary, "\n")) + "\n\n"
 
-	return out
+    // Last 7 days chart
+    out += sectionTitleStyle.Render("Last 7 Days") + "\n"
+    out += boxStyle.Render(renderSparkline(m.last7Days)) + "\n\n"
+
+    // Today box (current day context)
+    out += sectionTitleStyle.Render("Today") + "\n"
+    out += boxStyle.Render(formatKV("Day Type", m.dayType)) + "\n\n"
+
+    // Rest status
+    out += sectionTitleStyle.Render("Rest") + "\n"
+    out += boxStyle.Render(m.viewRestStatusBlock()) + "\n\n"
+
+    // Goals section
+    out += sectionTitleStyle.Render("Goals") + "\n"
+    var goals []string
+    for _, goalProgress := range m.goalProgreses {
+        goals = append(goals, goalProgress.Show())
+    }
+    if len(goals) == 0 {
+        out += boxStyle.Render("No goals configured")
+    } else {
+        out += strings.Join(goals, "\n\n")
+    }
+
+    return out + "\n"
 }
 
 func (m modelStatistics) viewRestStatusBlock() string {
-	out := "Rest status: "
+    out := "Rest status: "
 
 	now, _ := time.Parse(constnats.TimeLayout, time.Now().Format(constnats.TimeLayout))
 
@@ -131,7 +225,44 @@ func (m modelStatistics) viewRestStatusBlock() string {
 
 }
 
-func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int) (modelStatistics, error) {
+func formatKV(label, value string) string {
+    return labelStyle.Render(fmt.Sprintf("%-14s", label+":")) + " " + valueStyle.Render(value)
+}
+
+func renderSparkline(values []int) string {
+    if len(values) == 0 {
+        return ""
+    }
+    // Use ASCII-friendly gradient to avoid font issues on some terminals
+    blocks := []rune{' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'}
+    max := 0
+    for _, v := range values {
+        if v > max {
+            max = v
+        }
+    }
+    if max == 0 {
+        return strings.Repeat(string(blocks[0]), len(values))
+    }
+    var b strings.Builder
+    for _, v := range values {
+        idx := int(math.Round(float64(v) * float64(len(blocks)-1) / float64(max)))
+        if idx < 0 {
+            idx = 0
+        }
+        if idx >= len(blocks) {
+            idx = len(blocks) - 1
+        }
+        // ensure non-zero values are visible (not collapsed to the lowest symbol)
+        if v > 0 && idx == 0 {
+            idx = 1
+        }
+        b.WriteRune(blocks[idx])
+    }
+    return b.String()
+}
+
+func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int, totalMinutes int, levelNum int, levelName string, last7 []int) (modelStatistics, error) {
 	currentWeekDay := time.Now().Weekday()
 
 	dayType, ok := cfg.Celendar[currentWeekDay]
@@ -169,7 +300,7 @@ func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int) (modelStati
 		}
 	}
 
-	return modelStatistics{dayType: dayType.Name, goalProgreses: goalProgresses, nearestRest: nearestRestTime}, nil
+    return modelStatistics{dayType: dayType.Name, goalProgreses: goalProgresses, nearestRest: nearestRestTime, totalMinutes: totalMinutes, levelNum: levelNum, levelName: levelName, last7Days: last7}, nil
 }
 
 type GoalProgress struct {
