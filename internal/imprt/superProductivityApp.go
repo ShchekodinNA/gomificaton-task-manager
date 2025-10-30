@@ -34,6 +34,7 @@ type taskEntity struct {
 	TimeSpentOnDay map[string]int `json:"timeSpentOnDay"`
 	Title          string         `json:"title"`
 	Description    string         `json:"notes"`
+	ParentId       string         `json:"parentId"`
 }
 
 type impoerterSuperProductivityExportFile struct {
@@ -128,19 +129,29 @@ func createBatchTimers(entities map[string]taskEntity) ([]models.TimerModel, err
 	var timers []models.TimerModel
 
 	for taskId, task := range entities {
+		isSubtask := false
+		if task.ParentId != "" {
+			isSubtask = true
+		}
+
 		for dateStr, seconds := range task.TimeSpentOnDay {
 			var externalIdPtr string = generateExternalId(taskId, dateStr)
 			fixatedAt, err := time.Parse(constnats.DateLayout, dateStr)
 			if err != nil {
 				return nil, fmt.Errorf("parse date %s: %w", dateStr, err)
 			}
+			var secondsSpent time.Duration
+			if !isSubtask {
+				secondsSpent = time.Millisecond * time.Duration(seconds)
+			}
+
 			timers = append(timers, models.TimerModel{
 				Id:           nil,
 				ExternalId:   &externalIdPtr,
 				CreatedAt:    nil,
 				Name:         task.Title,
 				Description:  task.Description,
-				SecondsSpent: time.Millisecond * time.Duration(seconds),
+				SecondsSpent: secondsSpent,
 				FixatedAt:    fixatedAt,
 			})
 		}

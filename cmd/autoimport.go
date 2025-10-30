@@ -20,6 +20,7 @@ import (
 )
 
 // autoimportCmd represents the autoimport command
+// TODO Добавь отображение модели статистики плюс её обновление каждый раз, когда происходит операция импорта
 var autoimportCmd = &cobra.Command{
 	Use:   "autoimport",
 	Short: "Auto-import newest JSON on interval",
