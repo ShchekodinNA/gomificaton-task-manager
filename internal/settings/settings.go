@@ -98,31 +98,31 @@ type DayType struct {
 }
 
 type LevelDef struct {
-    Lvl       int    `yaml:"lvl" validate:"gte=0"`
-    Name      string `yaml:"name" validate:"required"`
-    Threshold int    `yaml:"trashold" validate:"gte=0"`
+	Lvl       int    `yaml:"lvl" validate:"gte=0"`
+	Name      string `yaml:"name" validate:"required"`
+	Threshold int    `yaml:"threshold" validate:"gte=0"`
 }
 
 func validateLevels(levels []LevelDef) error {
-    if len(levels) == 0 {
-        return nil
-    }
-    validate := validator.New(validator.WithRequiredStructEnabled())
-    for i := range levels {
-        if err := validate.Struct(&levels[i]); err != nil {
-            return fmt.Errorf("level %d: %w", i, err)
-        }
-        if i > 0 {
-            if levels[i].Threshold < levels[i-1].Threshold {
-                return fmt.Errorf("level %d threshold must be >= previous", levels[i].Lvl)
-            }
-        }
-        if levels[i].Lvl != i {
-            // keep it simple: require sequential numbering starting at 0
-            return fmt.Errorf("levels must be sequential starting at 0 (got lvl=%d at index=%d)", levels[i].Lvl, i)
-        }
-    }
-    return nil
+	if len(levels) == 0 {
+		return nil
+	}
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	for i := range levels {
+		if err := validate.Struct(&levels[i]); err != nil {
+			return fmt.Errorf("level %d: %w", i, err)
+		}
+		if i > 0 {
+			if levels[i].Threshold < levels[i-1].Threshold {
+				return fmt.Errorf("level %d threshold must be >= previous", levels[i].Lvl)
+			}
+		}
+		if levels[i].Lvl != i {
+			// keep it simple: require sequential numbering starting at 0
+			return fmt.Errorf("levels must be sequential starting at 0 (got lvl=%d at index=%d)", levels[i].Lvl, i)
+		}
+	}
+	return nil
 }
 
 func (d *DayType) Validate() error {

@@ -8,7 +8,6 @@ import (
 	"gomificator/internal/constnats"
 	"gomificator/internal/settings"
 	"gomificator/internal/storage"
-	"math"
 	"os"
 	"slices"
 	"strings"
@@ -35,74 +34,22 @@ var statisticsCmd = &cobra.Command{
 			panic(err)
 		}
 
-		validTimers, err := strg.TimersRepo.GetTimersBetweenDates(
-			time.Now(), time.Now(),
-		)
+		currentMinutes, err := currentDayMinutes(strg)
 		if err != nil {
 			panic(err)
 		}
-
-		// Calculate total focus time
-		totalDuration := time.Duration(0)
-		for _, timer := range validTimers {
-			totalDuration += timer.SecondsSpent
-		}
-
-		currentMinutes := int(totalDuration.Minutes())
 
 		// Compute total minutes across all timers (TODO: fix bottleneck)
-		allTimers, err := strg.TimersRepo.GetTimersBetweenDates(
-			time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
-			time.Now(),
-		)
+		totalMinutes, err := totalMinutes(strg)
 		if err != nil {
 			panic(err)
-		}
-		totalMinutes := 0
-		for _, t := range allTimers {
-			totalMinutes += int(t.SecondsSpent.Minutes())
 		}
 
 		// Determine current level from settings Levels slice
-		levelName := ""
-		levelNum := 0
-		if len(appSettings.Levels) > 0 {
-			for i := range appSettings.Levels {
-				if totalMinutes >= appSettings.Levels[i].Threshold {
-					levelNum = appSettings.Levels[i].Lvl
-					levelName = appSettings.Levels[i].Name
-				} else {
-					break
-				}
-			}
-		}
-
-		// Last 7 days minutes (oldest -> newest)
-		start7 := time.Now().AddDate(0, 0, -6)
-		end7 := time.Now()
-		sevenTimers, err := strg.TimersRepo.GetTimersBetweenDates(start7, end7)
-		if err != nil {
-			panic(err)
-		}
-		// Aggregate per day
-		dayBuckets := make(map[string]int, 7)
-		for i := 0; i < 7; i++ {
-			d := start7.AddDate(0, 0, i)
-			dayBuckets[d.Format(constnats.DateLayout)] = 0
-		}
-		for _, t := range sevenTimers {
-			key := t.FixatedAt.Format(constnats.DateLayout)
-			dayBuckets[key] += int(t.SecondsSpent.Minutes())
-		}
-		last7 := make([]int, 7)
-		for i := 0; i < 7; i++ {
-			d := start7.AddDate(0, 0, i)
-			last7[i] = dayBuckets[d.Format(constnats.DateLayout)]
-		}
-
+		level := currentLevel(appSettings.Levels, totalMinutes)
 		// Display statistics
 
-		statisticsModel, err := MakeNewStatisticsModel(*appSettings, currentMinutes, totalMinutes, levelNum, levelName, last7)
+		statisticsModel, err := MakeNewStatisticsModel(*appSettings, currentMinutes, totalMinutes, level)
 		if err != nil {
 			panic(err)
 		}
@@ -113,6 +60,58 @@ var statisticsCmd = &cobra.Command{
 		}
 
 	},
+}
+
+func currentDayMinutes(strg *storage.Storage) (int, error) {
+	return getDayMinutes(strg, time.Now())
+}
+
+func getDayMinutes(strg *storage.Storage, day time.Time) (int, error) {
+	validTimers, err := strg.TimersRepo.GetTimersBetweenDates(
+		day, day,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("timers between dates %w", err)
+	}
+
+	// Calculate total focus time
+	totalDuration := time.Duration(0)
+	for _, timer := range validTimers {
+		totalDuration += timer.SecondsSpent
+	}
+
+	return int(totalDuration.Minutes()), nil
+}
+
+func totalMinutes(strg *storage.Storage) (int, error) {
+	allTimers, err := strg.TimersRepo.GetTimersBetweenDates(
+		time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Now(),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("timers between dates %w", err)
+	}
+	totalDuration := time.Duration(0)
+	for _, t := range allTimers {
+		totalDuration += t.SecondsSpent
+	}
+
+	return int(totalDuration.Minutes()), nil
+}
+
+func currentLevel(levels []settings.LevelDef, totalMinutes int) settings.LevelDef {
+	level := settings.LevelDef{}
+	if len(levels) > 0 {
+		for i := range levels {
+			if totalMinutes >= levels[i].Threshold {
+				level = levels[i]
+			} else {
+				break
+			}
+		}
+	}
+
+	return level
 }
 
 func init() {
@@ -147,11 +146,10 @@ var (
 type modelStatistics struct {
 	nearestRest   time.Time
 	dayType       string
-	goalProgreses []GoalProgress
+	goalProgreses []GoalProgressModel
 	totalMinutes  int
 	levelNum      int
 	levelName     string
-	last7Days     []int
 }
 
 func (m modelStatistics) Init() tea.Cmd {
@@ -184,16 +182,11 @@ func (m modelStatistics) View() string {
 	out += sectionTitleStyle.Render("Summary") + "\n"
 	out += boxStyle.Render(strings.Join(summary, "\n")) + "\n\n"
 
-	// Last 7 days chart
-	out += sectionTitleStyle.Render("Last 7 Days") + "\n"
-	out += boxStyle.Render(renderSparkline(m.last7Days)) + "\n\n"
-
 	// Today box (current day context)
 	out += sectionTitleStyle.Render("Today") + "\n"
 	out += boxStyle.Render(formatKV("Day Type", m.dayType)) + "\n\n"
 
 	// Rest status
-	out += sectionTitleStyle.Render("Rest") + "\n"
 	out += boxStyle.Render(m.viewRestStatusBlock()) + "\n\n"
 
 	// Goals section
@@ -215,11 +208,12 @@ func (m modelStatistics) viewRestStatusBlock() string {
 	out := "Rest status: "
 
 	now, _ := time.Parse(constnats.TimeLayout, time.Now().Format(constnats.TimeLayout))
+	nearestRestTimeStr := m.nearestRest.Format(constnats.TimeLayout)
 
 	if now.After(m.nearestRest) {
-		out += greenBackgroudStyle("You can rest!")
+		out += greenBackgroudStyle(fmt.Sprintf("You can rest! %s reached", nearestRestTimeStr))
 	} else {
-		out += fmt.Sprintf("wait till %s", m.nearestRest.Format(constnats.TimeLayout))
+		out += fmt.Sprintf("wait till %s", nearestRestTimeStr)
 	}
 
 	return out
@@ -230,40 +224,7 @@ func formatKV(label, value string) string {
 	return labelStyle.Render(fmt.Sprintf("%-14s", label+":")) + " " + valueStyle.Render(value)
 }
 
-func renderSparkline(values []int) string {
-	if len(values) == 0 {
-		return ""
-	}
-	// Use ASCII-friendly gradient to avoid font issues on some terminals
-	blocks := []rune{' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'}
-	max := 0
-	for _, v := range values {
-		if v > max {
-			max = v
-		}
-	}
-	if max == 0 {
-		return strings.Repeat(string(blocks[0]), len(values))
-	}
-	var b strings.Builder
-	for _, v := range values {
-		idx := int(math.Round(float64(v) * float64(len(blocks)-1) / float64(max)))
-		if idx < 0 {
-			idx = 0
-		}
-		if idx >= len(blocks) {
-			idx = len(blocks) - 1
-		}
-		// ensure non-zero values are visible (not collapsed to the lowest symbol)
-		if v > 0 && idx == 0 {
-			idx = 1
-		}
-		b.WriteRune(blocks[idx])
-	}
-	return b.String()
-}
-
-func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int, totalMinutes int, levelNum int, levelName string, last7 []int) (modelStatistics, error) {
+func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int, totalMinutes int, level settings.LevelDef) (modelStatistics, error) {
 	currentWeekDay := time.Now().Weekday()
 
 	dayType, ok := cfg.Celendar[currentWeekDay]
@@ -281,7 +242,7 @@ func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int, totalMinute
 		return +1
 	})
 
-	goalProgresses := make([]GoalProgress, 0, len(focusGoals))
+	goalProgresses := make([]GoalProgressModel, 0, len(focusGoals))
 
 	for _, focusGoal := range focusGoals {
 		goalProgresses = append(goalProgresses, MakeGoalProgress(
@@ -293,18 +254,42 @@ func MakeNewStatisticsModel(cfg settings.Config, currentMinutes int, totalMinute
 		))
 	}
 
-	nearestRestTime := cfg.AlwaysRestAfter
+	nearestRestTime := calculateNearestRestTime(cfg.AlwaysRestAfter, goalProgresses, currentMinutes)
 
-	for _, goalProgress := range goalProgresses {
+	return modelStatistics{dayType: dayType.Name, goalProgreses: goalProgresses, nearestRest: nearestRestTime, totalMinutes: totalMinutes, levelNum: level.Lvl, levelName: level.Name}, nil
+}
+
+func calculateNearestRestTime(restBottomLine time.Time, goals []GoalProgressModel, currentMinutes int) time.Time {
+	nearestRestTime := restBottomLine
+	nearestRestId := -1
+
+	tempGoalProgresses := make([]GoalProgressModel, len(goals))
+	copy(tempGoalProgresses, goals)
+
+	for goalId, goalProgress := range goals {
 		if goalProgress.getProgressCoef() >= 1 && goalProgress.restAfter.Before(nearestRestTime) {
 			nearestRestTime = goalProgress.restAfter
+			nearestRestId = goalId
 		}
 	}
 
-	return modelStatistics{dayType: dayType.Name, goalProgreses: goalProgresses, nearestRest: nearestRestTime, totalMinutes: totalMinutes, levelNum: levelNum, levelName: levelName, last7Days: last7}, nil
+	if nearestRestId > 0 {
+		nextGoal := goals[nearestRestId-1]
+		reachedGoal := goals[nearestRestId]
+		timeDiff := reachedGoal.restAfter.Sub(nextGoal.restAfter)
+		scoreDiff := nextGoal.targetMinutes - reachedGoal.targetMinutes
+		minutesAboveReachedGoal := currentMinutes - reachedGoal.targetMinutes
+		coef := float64(minutesAboveReachedGoal) / float64(scoreDiff)
+		timeDiff = time.Duration(float64(timeDiff) * coef)
+		fmt.Println(timeDiff, scoreDiff, minutesAboveReachedGoal, coef)
+
+		nearestRestTime = nearestRestTime.Add(-timeDiff)
+	}
+
+	return nearestRestTime
 }
 
-type GoalProgress struct {
+type GoalProgressModel struct {
 	targetMinutes  int
 	currentMinutes int
 	medalCount     int
@@ -313,7 +298,7 @@ type GoalProgress struct {
 	Progress       progress.Model
 }
 
-func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType constnats.Medal, restAfter time.Time) GoalProgress {
+func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType constnats.Medal, restAfter time.Time) GoalProgressModel {
 	var progressOption progress.Option
 
 	switch medalType {
@@ -333,7 +318,7 @@ func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType c
 	progressBar := progress.New(progressOption)
 	progressBar.Width = maxWidth
 
-	return GoalProgress{
+	return GoalProgressModel{
 		targetMinutes:  targetMinutes,
 		currentMinutes: currentMinutes,
 		medalCount:     medalCount,
@@ -343,7 +328,7 @@ func MakeGoalProgress(targetMinutes, currentMinutes, medalCount int, medalType c
 	}
 }
 
-func (g GoalProgress) Show() string {
+func (g GoalProgressModel) Show() string {
 
 	out := fmt.Sprintf("%d/%d Minutes\nRewards: Rest from %s, Medal - %d %s\n%s",
 		g.currentMinutes,
@@ -359,6 +344,6 @@ func (g GoalProgress) Show() string {
 	return openboxStyle(out)
 }
 
-func (g GoalProgress) getProgressCoef() float64 {
+func (g GoalProgressModel) getProgressCoef() float64 {
 	return float64(g.currentMinutes) / float64(g.targetMinutes)
 }
