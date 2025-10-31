@@ -134,6 +134,7 @@ const (
 )
 
 var (
+	// TODO выполненные задачи лучше не делать с зеленым фоном, а делать у них зеленый border
 	greenBackgroudStyle = lipgloss.NewStyle().Background(lipgloss.Color("#085301ff")).Render
 	titleStyle          = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4"))
 	sectionTitleStyle   = lipgloss.NewStyle().Bold(true).Underline(true)
@@ -187,9 +188,11 @@ func (m modelStatistics) View() string {
 	out += boxStyle.Render(formatKV("Day Type", m.dayType)) + "\n\n"
 
 	// Rest status
+	// TODO Переработай отображение завершенного дедлайна так, чтобы зеленым горела вся строка
 	out += boxStyle.Render(m.viewRestStatusBlock()) + "\n\n"
 
 	// Goals section
+	// TODO Отображения минут за день должно быть только 1 раз. Сейчас дублируется для каждой задачи
 	out += sectionTitleStyle.Render("Goals") + "\n"
 	var goals []string
 	for _, goalProgress := range m.goalProgreses {
